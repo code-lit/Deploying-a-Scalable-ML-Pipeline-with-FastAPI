@@ -177,3 +177,9 @@ pyrightconfig.json
 fastapi/
 
 # End of https://www.toptal.com/developers/gitignore/api/python
+
+# Trained model artifacts (generated locally)
+model/*.pkl
+slice_output.txt
+__pycache__/
+*.pyc
