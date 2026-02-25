@@ -1,4 +1,6 @@
-import os
+from __future__ import annotations
+
+from pathlib import Path
 
 import pandas as pd
 from fastapi import FastAPI
@@ -6,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from ml.data import apply_label, process_data
 from ml.model import inference, load_model
+
 
 # DO NOT MODIFY
 class Data(BaseModel):
@@ -26,33 +29,30 @@ class Data(BaseModel):
     hours_per_week: int = Field(..., example=40, alias="hours-per-week")
     native_country: str = Field(..., example="United-States", alias="native-country")
 
-path = None # TODO: enter the path for the saved encoder 
-encoder = load_model(path)
 
-path = None # TODO: enter the path for the saved model 
-model = load_model(path)
+PROJECT_PATH = Path(__file__).resolve().parent
+MODEL_DIR = PROJECT_PATH / "model"
 
-# TODO: create a RESTful API using FastAPI
-app = None # your code here
+encoder = load_model(MODEL_DIR / "encoder.pkl")
+lb = load_model(MODEL_DIR / "lb.pkl")
+model = load_model(MODEL_DIR / "model.pkl")
 
-# TODO: create a GET on the root giving a welcome message
+app = FastAPI()
+
+
 @app.get("/")
 async def get_root():
-    """ Say hello!"""
-    # your code here
-    pass
+    return {
+        "message": (
+            "Welcome! Use POST /data/ for salary prediction (<=50K or >50K)."
+        )
+    }
 
 
-# TODO: create a POST on a different path that does model inference
 @app.post("/data/")
 async def post_inference(data: Data):
-    # DO NOT MODIFY: turn the Pydantic model into a dict.
-    data_dict = data.dict()
-    # DO NOT MODIFY: clean up the dict to turn it into a Pandas DataFrame.
-    # The data has names with hyphens and Python does not allow those as variable names.
-    # Here it uses the functionality of FastAPI/Pydantic/etc to deal with this.
-    data = {k.replace("_", "-"): [v] for k, v in data_dict.items()}
-    data = pd.DataFrame.from_dict(data)
+    data_dict = data.model_dump(by_alias=True)
+    df = pd.DataFrame([data_dict])
 
     cat_features = [
         "workclass",
@@ -64,11 +64,15 @@ async def post_inference(data: Data):
         "sex",
         "native-country",
     ]
-    data_processed, _, _, _ = process_data(
-        # your code here
-        # use data as data input
-        # use training = False
-        # do not need to pass lb as input
+
+    X, _, _, _ = process_data(
+        df,
+        categorical_features=cat_features,
+        label=None,
+        training=False,
+        encoder=encoder,
+        lb=lb,
     )
-    _inference = None # your code here to predict the result using data_processed
-    return {"result": apply_label(_inference)}
+
+    pred = inference(model, X)
+    return {"result": apply_label(pred)}

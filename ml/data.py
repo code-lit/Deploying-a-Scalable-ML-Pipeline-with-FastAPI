@@ -1,77 +1,91 @@
+from __future__ import annotations
+
 import numpy as np
+import pandas as pd
 from sklearn.preprocessing import LabelBinarizer, OneHotEncoder
 
 
+def clean_census_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Clean the Census dataset.
+
+    - Strips whitespace from string columns (handles messy ', ' formatting)
+    - Replaces '?' with NaN and drops rows with missing values
+    - Normalizes the salary label by removing trailing '.' if present
+    """
+    df = df.copy()
+
+    # Strip whitespace from object columns
+    obj_cols = df.select_dtypes(include=["object"]).columns
+    for col in obj_cols:
+        df[col] = df[col].astype(str).str.strip()
+
+    # Replace missing marker and drop incomplete rows
+    df.replace("?", np.nan, inplace=True)
+    df.dropna(inplace=True)
+
+    # Normalize salary values if present
+    if "salary" in df.columns:
+        df["salary"] = df["salary"].astype(str).str.replace(".", "", regex=False).str.strip()
+
+    return df
+
+
 def process_data(
-    X, categorical_features=[], label=None, training=True, encoder=None, lb=None
+    X: pd.DataFrame,
+    categorical_features: list[str],
+    label: str | None = None,
+    training: bool = True,
+    encoder: OneHotEncoder | None = None,
+    lb: LabelBinarizer | None = None,
 ):
-    """ Process the data used in the machine learning pipeline.
+    """Process data for model training/inference.
 
-    Processes the data using one hot encoding for the categorical features and a
-    label binarizer for the labels. This can be used in either training or
-    inference/validation.
-
-    Note: depending on the type of model used, you may want to add in functionality that
-    scales the continuous data.
-
-    Inputs
-    ------
-    X : pd.DataFrame
-        Dataframe containing the features and label. Columns in `categorical_features`
-    categorical_features: list[str]
-        List containing the names of the categorical features (default=[])
-    label : str
-        Name of the label column in `X`. If None, then an empty array will be returned
-        for y (default=None)
-    training : bool
-        Indicator if training mode or inference/validation mode.
-    encoder : sklearn.preprocessing._encoders.OneHotEncoder
-        Trained sklearn OneHotEncoder, only used if training=False.
-    lb : sklearn.preprocessing._label.LabelBinarizer
-        Trained sklearn LabelBinarizer, only used if training=False.
+    When training=True, fits and returns `encoder` and `lb`.
+    When training=False, uses provided `encoder` (and `lb` if label is present).
 
     Returns
     -------
-    X : np.array
-        Processed data.
-    y : np.array
-        Processed labels if labeled=True, otherwise empty np.array.
-    encoder : sklearn.preprocessing._encoders.OneHotEncoder
-        Trained OneHotEncoder if training is True, otherwise returns the encoder passed
-        in.
-    lb : sklearn.preprocessing._label.LabelBinarizer
-        Trained LabelBinarizer if training is True, otherwise returns the binarizer
-        passed in.
+    X_out : np.ndarray
+    y_out : np.ndarray | np.array([])
+    encoder : OneHotEncoder
+    lb : LabelBinarizer
     """
+    X = clean_census_df(X)
 
+    # Separate label if provided
     if label is not None:
-        y = X[label]
-        X = X.drop([label], axis=1)
+        y = X[label].values
+        X = X.drop(columns=[label])
     else:
         y = np.array([])
 
     X_categorical = X[categorical_features].values
-    X_continuous = X.drop(*[categorical_features], axis=1)
+    X_continuous = X.drop(columns=categorical_features).values
 
-    if training is True:
+    if training:
         encoder = OneHotEncoder(sparse_output=False, handle_unknown="ignore")
+        X_cat = encoder.fit_transform(X_categorical)
+
         lb = LabelBinarizer()
-        X_categorical = encoder.fit_transform(X_categorical)
-        y = lb.fit_transform(y.values).ravel()
+        y_out = lb.fit_transform(y).ravel() if label is not None else np.array([])
     else:
-        X_categorical = encoder.transform(X_categorical)
-        try:
-            y = lb.transform(y.values).ravel()
-        # Catch the case where y is None because we're doing inference.
-        except AttributeError:
-            pass
+        if encoder is None:
+            raise ValueError("encoder must be provided when training=False")
 
-    X = np.concatenate([X_continuous, X_categorical], axis=1)
-    return X, y, encoder, lb
+        X_cat = encoder.transform(X_categorical)
 
-def apply_label(inference):
-    """ Convert the binary label in a single inference sample into string output."""
-    if inference[0] == 1:
-        return ">50K"
-    elif inference[0] == 0:
-        return "<=50K"
+        if label is not None:
+            if lb is None:
+                raise ValueError("lb must be provided when label is not None and training=False")
+            y_out = lb.transform(y).ravel()
+        else:
+            y_out = np.array([])
+
+    X_out = np.concatenate([X_continuous, X_cat], axis=1)
+    return X_out, y_out, encoder, lb
+
+
+def apply_label(inference) -> str:
+    """Convert binary prediction to salary label string."""
+    val = int(np.array(inference).ravel()[0])
+    return ">50K" if val == 1 else "<=50K"
